@@ -1,0 +1,62 @@
+name: Build Horn Delay VST3
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            # No explicit -G: CMake auto-detects whichever Visual Studio the runner has (2022 or 2026).
+            configure: cmake -B build -A x64
+            artifact: HornDelay-VST3-Windows
+          - name: macOS (Universal)
+            os: macos-latest
+            configure: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+            artifact: HornDelay-VST3-macOS
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: ${{ matrix.configure }}
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target HornDelay_VST3 --parallel 4
+
+      - name: Ad-hoc code sign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - "build/HornDelay_artefacts/Release/VST3/Horn Delay.vst3"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/HornDelay_artefacts/Release/VST3/Horn Delay.vst3
+
+  test-linux:
+    name: Linux build + offline DSP tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxcomposite-dev libfreetype6-dev libfontconfig1-dev
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHORN_DELAY_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel 4
+      - name: Run offline tests
+        run: ./build/HornDelayTests_artefacts/Release/HornDelayTests
